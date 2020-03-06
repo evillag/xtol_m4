@@ -1,0 +1,21 @@
+[
+  {
+    "Name": "segment_1474738659496.36_file_00000",
+    "ActionOnFailure": "CONTINUE",
+    "Jar": "/usr/lib/hadoop-mapreduce/hadoop-streaming.jar",
+    "Args": [
+      "-files",
+      "s3://evillalobosscripts/Mapper.py,s3://evillalobosscripts/Reducer.py",
+      "-mapper",
+      "Mapper.py",
+      "-reducer",
+      "Reducer.py",
+      "-input",
+      "s3://commoncrawl/crawl-data/CC-MAIN-2016-40/segments/1474738659496.36/wet/CC-MAIN-20160924173739-00000-ip-10-143-35-109.ec2.internal.warc.wet.gz",
+      "-output",
+      "s3://evillalobosoutput/1474738659496.36_ip",
+      "-inputformat",
+      "TextInputFormat"
+    ]
+  }
+]

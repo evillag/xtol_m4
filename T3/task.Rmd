@@ -1,0 +1,287 @@
+---
+title: "Course 4/Task 3: Develop models to predict sentiment"
+author: "Esteban Villalobos Gomez"
+date: "January $23_{rd}$, 2020"
+output:
+  html_document:
+    df_print: paged
+    toc: yes
+  pdf_document:
+    df_print: kable
+    toc: yes
+  html_notebook:
+    highlight: tango
+    theme: simplex
+    toc: yes
+    toc_float: true
+  word_document:
+    toc: yes
+subtitle: "XTOL Data Analytics and Big Data program"
+---
+
+```{r include = FALSE}
+library(doParallel)
+library(plotly)
+library(corrplot)
+library(RColorBrewer)
+library(caret)
+library(dplyr)
+library(readr)
+```
+
+
+Common function definitions:
+```{r}
+plot_correlation <- function(dataset) {
+  #' Calculate the correlation among columns in the dataset
+  #' and plot a heat diagram with the results
+  #' @param dataset Data.frame to analyse
+  #' @return correlation data
+  corr_data <- cor(dataset)
+  
+  corrplot(corr_data, type="full", 
+           order = "original",
+           tl.cex = .6, 
+           addCoefasPercent = TRUE,
+           col=brewer.pal(n=8, name="RdYlBu"))
+  return(corr_data)
+}
+
+# General EDA
+describe_df <- function(name, df) {
+  paste("EDA for ", name, ":")
+  str(df)
+  summary(df)
+  paste("Number of NA values: ", sum(is.na(df)))
+}
+
+#### Preprocessing functions
+remove_highly_correlated_features <- function(df) {
+  corr_data <- cor(df)
+  high_corr_cols <- findCorrelation(corr_data, cutoff = 0.9, verbose = FALSE, names = FALSE, exact = ncol(corr_data))
+  df[high_corr_cols] <- NULL
+  return(df)
+}
+
+remove_nzv <- function(df) {
+  # nearZeroVar() with saveMetrics = FALSE returns an vector 
+  nzv <- nearZeroVar(df, saveMetrics = FALSE) 
+  str(nzv)
+
+  # create a new data set and remove near zero variance features
+  df_new <- df[,-nzv]
+  str(df_new)
+  return(df_new)
+}
+
+
+#### Execute in parallel
+run_in_parallel <- function(FUN, ...) {
+  # Find how many cores are on your machine
+  num_cores <- detectCores() # Result = Typically 4 to 6
+  
+  # Create Cluster with desired number of cores. Don't use them all! Your computer is running other processes. 
+  cl <- makeCluster(num_cores - 2)
+  
+  # Register Cluster
+  registerDoParallel(cl)
+  
+  result <- FUN(...)
+  
+  # Stop Cluster. After performing your tasks, stop your cluster. 
+  stopCluster(cl)
+  return(result)
+}
+
+```
+
+# iPhone analysis
+
+Load training datasets, one is for IPhone labeled sentiment, and the other one for the Samsung Galaxy phone.
+```{r echo=FALSE}
+iphoneDF <- read_csv("iphone_smallmatrix_labeled_8d.csv")
+
+```
+
+Explore structure and descriptive statistics from the training datasets
+```{r echo=FALSE}
+describe_df("iPhone", iphoneDF)
+```
+## Check the sentiment results distribution.
+### iPhone sentiments 
+```{r}
+plot_ly(iphoneDF, x= ~iphoneDF$iphonesentiment, type='histogram')
+```
+
+
+## Look for any correlation in both dataframes
+### iPhone correlation
+Explore correlation between all variables:
+```{r echo=FALSE}
+# create a new data set and remove features highly correlated with the dependant 
+df <- remove_highly_correlated_features(iphoneDF)
+paste("Number of original features: ", ncol(iphoneDF))
+paste("Number of features after cleanup: ", ncol(df))
+plot_correlation(df)
+```
+Removing near zero vars:
+```{r}
+nzvMetrics <- nearZeroVar(df, saveMetrics = TRUE)
+str(nzvMetrics)
+
+df_nzv <- remove_nzv(df)
+
+paste("Final number of features after cleanup: ", ncol(df_nzv))
+```
+```{r}
+# set.seed(123)
+# iphoneSample <- iphoneDF[sample(1:nrow(iphoneDF), 1000, replace=FALSE),]
+# 
+# # Set up rfeControl with randomforest, repeated cross validation and no updates
+# ctrl <- rfeControl(functions = rfFuncs, 
+#                    method = "repeatedcv",
+#                    repeats = 5,
+#                    verbose = FALSE)
+# 
+# # Use rfe and omit the response variable (attribute 59 iphonesentiment) 
+# rfeResults <- run_in_parallel(rfe, iphoneSample[,1:58], 
+#                               iphoneSample$iphonesentiment, 
+#                               sizes=(1:58), rfeControl=ctrl)
+# 
+# # Get results
+# rfeResults
+# 
+# # Plot results
+# plot(rfeResults, type=c("g", "o"))
+# ```
+# ```{r}
+# df <- df_nzv
+# df$iphonesentiment <- as.factor(df$iphonesentiment)
+```
+## Preprocess label and partition data
+```{r}
+df <- iphoneDF
+df$iphonesentiment <- as.factor(df$iphonesentiment)
+plot_ly(df, x= ~df$iphonesentiment, type='histogram')
+
+set.seed(90210)
+dataPar <- createDataPartition(df$iphonesentiment, p = .70, list = FALSE)
+train_df <- df[dataPar,]
+test_df <- df[-dataPar,]
+
+df_nzv$iphonesentiment <- as.factor(df_nzv$iphonesentiment)
+set.seed(90210)
+dataPar_nzv <- createDataPartition(df_nzv$iphonesentiment, p = .70, list = FALSE)
+train_df_nzv <- df_nzv[dataPar_nzv,]
+test_df_nzv <- df_nzv[-dataPar_nzv,]
+
+```
+## CV (Cross Validation) and Modeling
+```{r}
+# cross validation 
+fitControl <- trainControl(method = "repeatedcv", number = 10, repeats = 5)
+```
+
+### C5.0
+```{r}
+##### Decision Tree (C5.0) #####
+set.seed(90210)
+system.time(dt_c50 <- run_in_parallel(train, iphonesentiment~., data = df, method = 'C5.0', trControl=fitControl))
+
+dt_c50
+
+```
+Train model with featured-selected dataset:
+```{r}
+set.seed(90210)
+system.time(dt_c50_clean <- run_in_parallel(train, iphonesentiment~., data = df_nzv, method = 'C5.0', trControl=fitControl)) 
+
+dt_c50_clean
+
+```
+### Random Forest
+```{r}
+set.seed(90210)
+##### Random Forest  #####
+system.time(rf <- run_in_parallel(train, iphonesentiment~., data = df, method = 'rf', trControl = fitControl ))
+
+rf
+```
+
+Train model with featured-selected dataset:
+```{r}
+set.seed(90210)
+system.time(rf_clean <- run_in_parallel(train, iphonesentiment~., data = df_nzv, method = 'rf', trControl=fitControl)) 
+
+rf_clean
+```
+
+### Support Vector Machine
+```{r}
+set.seed(90210)
+# SVM (from the e1071 package) 
+library(e1071)
+system.time(model_svm <- run_in_parallel(svm, iphonesentiment ~., data = df))
+
+psvm <- predict(model_svm, test_df) 
+post_svm <- postResample(psvm, test_df$iphonesentiment)
+
+```
+Train model with featured-selected dataset:
+```{r}
+set.seed(90210)
+system.time(model_svm_clean <- run_in_parallel(svm, iphonesentiment ~., data = df_nzv))
+
+psvm_nvz <- predict(model_svm_clean, test_df_nzv) 
+postResample(psvm_nvz, test_df_nzv$iphonesentiment)
+
+```
+## K-nearest Neighbors (from the kknn package)
+```{r}
+library(kknn)
+set.seed(90210)
+system.time(knn_model <- run_in_parallel(train.kknn, iphonesentiment ~ ., data = df))
+pknn <- predict(knn_model, test_df) 
+post_knn <- postResample(pknn, test_df$iphonesentiment)
+```
+Train model with featured-selected dataset:
+```{r}
+set.seed(90210)
+system.time(knn_model_nzv <- run_in_parallel(train.kknn, iphonesentiment ~ ., data = df_nzv))
+pknn_nzv <- predict(knn_model_nzv, test_df_nzv) 
+postResample(pknn_nzv, test_df_nzv$iphonesentiment)
+```
+
+```{r}
+pdt <- predict(dt_c50, test_df)
+post_c50 <- postResample(pdt, test_df$iphonesentiment)
+
+prf <- predict(rf, test_df) 
+post_rf <- postResample(prf, test_df$iphonesentiment)
+
+# Creating confusion matrix
+cm_dt <- confusionMatrix(pdt, test_df$iphonesentiment) 
+cm_dt
+
+cmRF <- confusionMatrix(prf, test_df$iphonesentiment) 
+cmRF
+
+cmsvm <- confusionMatrix(psvm, test_df$iphonesentiment) 
+cmsvm
+
+cmknn <- confusionMatrix(pknn, test_df$iphonesentiment) 
+cmknn
+
+# Grouped bar chart to evaluate model performance
+Eval <- c(post_c50, post_rf, post_svm, post_knn)
+barplot(Eval, main = "Model Evaluation", col = c("darkblue","red"))
+```
+----------------------------------------------------------
+# Galaxy analysis
+
+### Galaxy sentiments histogram
+```{r}
+galaxyDF <- read_csv("galaxy_smallmatrix_labeled_9d.csv")
+
+plot_ly(galaxyDF, x= ~galaxyDF$galaxysentiment, type='histogram')
+```
