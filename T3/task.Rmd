@@ -93,6 +93,34 @@ run_in_parallel <- function(FUN, ...) {
   return(result)
 }
 
+svm_train <- function(dataF, testing_data) {
+  # SVM (from the e1071 package) 
+  library(e1071)
+  set.seed(641386945)
+  system.time(res.model <- run_in_parallel(svm, iphonesentiment ~., data = dataF))
+  res.predictions <- predict(res.model, testing_data) 
+  res.post_resample <- postResample(res.predictions, testing_data$iphonesentiment)
+  return(list("model" = res.model, "post_resample" = res.post_resample))
+}
+
+knn_train <- function(dataF, testing_data) {
+  # K-nearest Neighbors (from the kknn package)
+  library(kknn)
+  set.seed(641386945)
+  system.time(res.model <- run_in_parallel(train.kknn, iphonesentiment ~., data = dataF))
+  res.predictions <- predict(res.model, testing_data) 
+  res.post_resample <- postResample(res.predictions, testing_data$iphonesentiment)
+  return(list("model" = res.model, "post_resample" = res.post_resample))
+}
+
+caret_train <- function(dataF, testing_data, model_name, fitCtrl) {
+  set.seed(641386945)
+  system.time(res.model <- run_in_parallel(train, iphonesentiment~., data = dataF, method = model_name, trControl = fitCtrl ))
+  res.predictions <- predict(res.model, testing_data) 
+  res.post_resample <- postResample(res.predictions, testing_data$iphonesentiment)
+  return(list("model" = res.model, "post_resample" = res.post_resample))
+}
+
 ```
 
 # iPhone analysis
@@ -119,45 +147,55 @@ plot_ly(iphoneDF, x= ~iphoneDF$iphonesentiment, type='histogram')
 Explore correlation between all variables:
 ```{r echo=FALSE}
 # create a new data set and remove features highly correlated with the dependant 
-df <- remove_highly_correlated_features(iphoneDF)
+iphoneCOR <- remove_highly_correlated_features(iphoneDF)
 paste("Number of original features: ", ncol(iphoneDF))
-paste("Number of features after cleanup: ", ncol(df))
-plot_correlation(df)
+paste("Number of features after cleanup: ", ncol(iphoneCOR))
+plot_correlation(iphoneCOR)
 ```
 Removing near zero vars:
 ```{r}
-nzvMetrics <- nearZeroVar(df, saveMetrics = TRUE)
+nzvMetrics <- nearZeroVar(iphoneCOR, saveMetrics = TRUE)
 str(nzvMetrics)
 
-df_nzv <- remove_nzv(df)
+iphoneNZV <- remove_nzv(iphoneCOR)
 
-paste("Final number of features after cleanup: ", ncol(df_nzv))
+paste("NZV number of features after cleanup: ", ncol(iphoneNZV))
 ```
+### RFE
 ```{r}
-# set.seed(123)
-# iphoneSample <- iphoneDF[sample(1:nrow(iphoneDF), 1000, replace=FALSE),]
-# 
-# # Set up rfeControl with randomforest, repeated cross validation and no updates
-# ctrl <- rfeControl(functions = rfFuncs, 
-#                    method = "repeatedcv",
-#                    repeats = 5,
-#                    verbose = FALSE)
-# 
-# # Use rfe and omit the response variable (attribute 59 iphonesentiment) 
-# rfeResults <- run_in_parallel(rfe, iphoneSample[,1:58], 
-#                               iphoneSample$iphonesentiment, 
-#                               sizes=(1:58), rfeControl=ctrl)
-# 
-# # Get results
-# rfeResults
-# 
-# # Plot results
-# plot(rfeResults, type=c("g", "o"))
-# ```
-# ```{r}
-# df <- df_nzv
-# df$iphonesentiment <- as.factor(df$iphonesentiment)
+set.seed(9874568)
+iphone_sample <- iphoneDF[sample(1:nrow(iphoneDF), 1000, replace=FALSE),]
+
+# Set up rfeControl with randomforest, repeated cross validation and no updates
+ctrl <- rfeControl(functions = rfFuncs,
+                   method = "repeatedcv",
+                   repeats = 5,
+                   verbose = FALSE)
+
+# Use rfe and omit the response variable (attribute 59 iphonesentiment)
+rfe_results <- run_in_parallel(rfe, iphone_sample[,1:58],
+                              iphone_sample$iphonesentiment,
+                              sizes=(1:58), rfeControl=ctrl)
+
+# Get results
+rfe_results
+
+# Plot results
+plot(rfe_results, type=c("g", "o"))
 ```
+Create a new dataset with the best features found by RFE
+```{r}
+# create new data set with rfe recommended features
+iphoneRFE <- iphoneDF[,predictors(rfe_results)]
+
+# add the dependent variable to iphoneRFE
+iphoneRFE$iphonesentiment <- iphoneDF$iphonesentiment
+
+# review outcome
+str(iphoneRFE)
+```
+
+
 ## Preprocess label and partition data
 ```{r}
 df <- iphoneDF
@@ -169,102 +207,142 @@ dataPar <- createDataPartition(df$iphonesentiment, p = .70, list = FALSE)
 train_df <- df[dataPar,]
 test_df <- df[-dataPar,]
 
-df_nzv$iphonesentiment <- as.factor(df_nzv$iphonesentiment)
+#iphoneCOR
+iphoneCOR$iphonesentiment <- as.factor(iphoneCOR$iphonesentiment)
 set.seed(90210)
-dataPar_nzv <- createDataPartition(df_nzv$iphonesentiment, p = .70, list = FALSE)
-train_df_nzv <- df_nzv[dataPar_nzv,]
-test_df_nzv <- df_nzv[-dataPar_nzv,]
+dataParCOR <- createDataPartition(iphoneCOR$iphonesentiment, p = .70, list = FALSE)
+train_dfCOR <- iphoneCOR[dataParCOR,]
+test_dfCOR <- iphoneCOR[-dataParCOR,]
+
+#iphoneRFE
+iphoneRFE$iphonesentiment <- as.factor(iphoneRFE$iphonesentiment)
+set.seed(90210)
+dataParRFE <- createDataPartition(iphoneRFE$iphonesentiment, p = .70, list = FALSE)
+train_dfRFE <- iphoneRFE[dataParRFE,]
+test_dfRFE <- iphoneRFE[-dataParRFE,]
+
+#iphoneNZV
+iphoneNZV$iphonesentiment <- as.factor(iphoneNZV$iphonesentiment)
+set.seed(90210)
+dataParNZV <- createDataPartition(iphoneNZV$iphonesentiment, p = .70, list = FALSE)
+train_dfNZV <- iphoneNZV[dataParNZV,]
+test_dfNZV <- iphoneNZV[-dataParNZV,]
 
 ```
 ## CV (Cross Validation) and Modeling
 ```{r}
 # cross validation 
-fitControl <- trainControl(method = "repeatedcv", number = 10, repeats = 5)
+fitControl <- trainControl(method = "repeatedcv", number = 10, repeats = 2)
 ```
 
 ### C5.0
 ```{r}
 ##### Decision Tree (C5.0) #####
-set.seed(90210)
-system.time(dt_c50 <- run_in_parallel(train, iphonesentiment~., data = df, method = 'C5.0', trControl=fitControl))
-
-dt_c50
-
+print("C5.0: Full Dataset")
+dt_c50 <- caret_train(df, test_df, 'C5.0', fitControl)
+dt_c50["model"]
+dt_c50["post_resample"]
 ```
-Train model with featured-selected dataset:
+Train model with RFE dataset:
 ```{r}
-set.seed(90210)
-system.time(dt_c50_clean <- run_in_parallel(train, iphonesentiment~., data = df_nzv, method = 'C5.0', trControl=fitControl)) 
-
-dt_c50_clean
-
+print("C5.0: RFE")
+dt_c50_rfe <- caret_train(iphoneRFE, test_dfRFE, 'C5.0', fitControl)
+dt_c50_rfe["model"]
+dt_c50_rfe["post_resample"]
 ```
+Train model with NZV dataset:
+```{r}
+print("C5.0: NZV")
+dt_c50_nzv <- caret_train(iphoneNZV, test_dfNZV, 'C5.0', fitControl)
+dt_c50_nzv["model"]
+dt_c50_nzv["post_resample"]
+```
+Train model with COR dataset:
+```{r}
+print("C5.0: COR")
+dt_c50_cor <- caret_train(iphoneCOR, test_dfCOR, 'C5.0', fitControl)
+dt_c50_cor["model"]
+dt_c50_cor["post_resample"]
+```
+
 ### Random Forest
 ```{r}
-set.seed(90210)
-##### Random Forest  #####
-system.time(rf <- run_in_parallel(train, iphonesentiment~., data = df, method = 'rf', trControl = fitControl ))
+print("Random Forest: Full Dataset")
+rf <- caret_train(df, test_df, 'rf', fitControl)
+rf["model"]
+rf["post_resample"]
 
-rf
+print("Random Forest: RFE")
+rf_rfe <- caret_train(iphoneRFE, test_dfRFE, 'rf', fitControl)
+rf_rfe["model"]
+rf_rfe["post_resample"]
+
+print("Random Forest: NZV")
+rf_nzv <- caret_train(iphoneNZV, test_dfNZV, 'rf', fitControl)
+rf_nzv["model"]
+rf_nzv["post_resample"]
+
+print("Random Forest: COR")
+rf_cor <- caret_train(iphoneCOR, test_dfCOR, 'rf', fitControl)
+rf_cor["model"]
+rf_cor["post_resample"]
 ```
 
-Train model with featured-selected dataset:
-```{r}
-set.seed(90210)
-system.time(rf_clean <- run_in_parallel(train, iphonesentiment~., data = df_nzv, method = 'rf', trControl=fitControl)) 
-
-rf_clean
-```
 
 ### Support Vector Machine
 ```{r}
-set.seed(90210)
-# SVM (from the e1071 package) 
-library(e1071)
-system.time(model_svm <- run_in_parallel(svm, iphonesentiment ~., data = df))
+print("SVM: Full Dataset")
+svm_train_full <- svm_train(df, test_df)
+svm_train_full["model"]
+svm_train_full["post_resample"]
 
-psvm <- predict(model_svm, test_df) 
-post_svm <- postResample(psvm, test_df$iphonesentiment)
+print("SVM: RFE")
+svm_train_rfe <- svm_train(iphoneRFE, test_dfRFE)
+svm_train_rfe["model"]
+svm_train_rfe["post_resample"]
 
-```
-Train model with featured-selected dataset:
-```{r}
-set.seed(90210)
-system.time(model_svm_clean <- run_in_parallel(svm, iphonesentiment ~., data = df_nzv))
+print("SVM: NZV")
+svm_train_nzv <- svm_train(iphoneNZV, test_dfNZV)
+svm_train_nzv["model"]
+svm_train_nzv["post_resample"]
 
-psvm_nvz <- predict(model_svm_clean, test_df_nzv) 
-postResample(psvm_nvz, test_df_nzv$iphonesentiment)
+print("SVM: COR")
+svm_train_cor <- svm_train(iphoneCOR, test_dfCOR)
+svm_train_cor["model"]
+svm_train_cor["post_resample"]
 
 ```
 ## K-nearest Neighbors (from the kknn package)
 ```{r}
-library(kknn)
-set.seed(90210)
-system.time(knn_model <- run_in_parallel(train.kknn, iphonesentiment ~ ., data = df))
-pknn <- predict(knn_model, test_df) 
-post_knn <- postResample(pknn, test_df$iphonesentiment)
+print("KNN: Full Dataset")
+knn_train_full <- knn_train(df, test_df)
+knn_train_full["model"]
+knn_train_full["post_resample"]
+
+print("KNN: RFE")
+knn_train_rfe <- knn_train(iphoneRFE, test_dfRFE)
+knn_train_rfe["model"]
+knn_train_rfe["post_resample"]
+
+print("KNN: NZV")
+knn_train_nzv <- knn_train(iphoneNZV, test_dfNZV)
+knn_train_nzv["model"]
+knn_train_nzv["post_resample"]
+
+print("KNN: COR")
+knn_train_cor <- knn_train(iphoneCOR, test_dfCOR)
+knn_train_cor["model"]
+knn_train_cor["post_resample"]
 ```
-Train model with featured-selected dataset:
-```{r}
-set.seed(90210)
-system.time(knn_model_nzv <- run_in_parallel(train.kknn, iphonesentiment ~ ., data = df_nzv))
-pknn_nzv <- predict(knn_model_nzv, test_df_nzv) 
-postResample(pknn_nzv, test_df_nzv$iphonesentiment)
-```
 
 ```{r}
-pdt <- predict(dt_c50, test_df)
-post_c50 <- postResample(pdt, test_df$iphonesentiment)
-
-prf <- predict(rf, test_df) 
-post_rf <- postResample(prf, test_df$iphonesentiment)
-
+# TODO: replace with correct models
 # Creating confusion matrix
 cm_dt <- confusionMatrix(pdt, test_df$iphonesentiment) 
 cm_dt
 
-cmRF <- confusionMatrix(prf, test_df$iphonesentiment) 
-cmRF
+#cmRF <- confusionMatrix(prf, test_df$iphonesentiment) 
+#cmRF
 
 cmsvm <- confusionMatrix(psvm, test_df$iphonesentiment) 
 cmsvm
@@ -273,15 +351,40 @@ cmknn <- confusionMatrix(pknn, test_df$iphonesentiment)
 cmknn
 
 # Grouped bar chart to evaluate model performance
-Eval <- c(post_c50, post_rf, post_svm, post_knn)
+#Eval <- c(post_c50, post_rf, post_svm, post_knn)
+Eval <- c(post_c50, post_svm, post_knn)
 barplot(Eval, main = "Model Evaluation", col = c("darkblue","red"))
 ```
-----------------------------------------------------------
-# Galaxy analysis
-
-### Galaxy sentiments histogram
+Pre processing the large datatset 
 ```{r}
-galaxyDF <- read_csv("galaxy_smallmatrix_labeled_9d.csv")
+large_df <- read_csv("big_matrix.csv")
+#str(large_df)
 
-plot_ly(galaxyDF, x= ~galaxyDF$galaxysentiment, type='histogram')
+large_df$id <- NULL
+# create new data set with rfe recommended features
+large_df <- large_df[,predictors(rfe_results)]
+# review outcome
+str(large_df)
+
 ```
+
+Apply Model on the large dataset
+```{r}
+options(max.print=1000000)
+
+large_df$iphonesentiment<- predict(rf_rfe["model"], large_df)
+head(large_df$iphonesentiment, 5)
+summary(large_df$iphonesentiment)
+```
+
+-----------------------------------------------------------------
+```{r}
+predicted <- predict(rf_rfe["model"], head(large_df, 20000))
+predicted
+#large_df$iphonesentiment<- predict(rf_rfe["model"], large_df)
+#head(large_df$iphonesentiment, 5)
+#summary(large_df$iphonesentiment)
+```
+
+
+--EOF--
