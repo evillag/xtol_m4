@@ -3,17 +3,17 @@ title: "Course 4/Task 3: Develop models to predict sentiment"
 author: "Esteban Villalobos Gomez"
 date: "January $23_{rd}$, 2020"
 output:
-  html_document:
-    df_print: paged
-    toc: yes
-  pdf_document:
-    df_print: kable
-    toc: yes
   html_notebook:
     highlight: tango
     theme: simplex
     toc: yes
     toc_float: true
+  pdf_document:
+    df_print: kable
+    toc: yes
+  html_document:
+    df_print: paged
+    toc: yes
   word_document:
     toc: yes
 subtitle: "XTOL Data Analytics and Big Data program"
@@ -27,10 +27,12 @@ library(RColorBrewer)
 library(caret)
 library(dplyr)
 library(readr)
+library(ggplot2)
+options(max.print=1000000)
 ```
 
 
-Common function definitions:
+# Common function definitions:
 ```{r}
 plot_correlation <- function(dataset) {
   #' Calculate the correlation among columns in the dataset
@@ -121,29 +123,42 @@ caret_train <- function(dataF, testing_data, model_name, fitCtrl) {
   return(list("model" = res.model, "post_resample" = res.post_resample))
 }
 
+plot_confusion_matrix <- function(conf_matrix, model_name) {
+  table <- data.frame(conf_matrix$table)
+  
+  plotTable <- table %>%
+    mutate(goodbad = ifelse(table$Prediction == table$Reference, "good", "bad")) %>%
+    group_by(Reference) %>%
+    mutate(prop = Freq/sum(Freq))
+  
+  # fill alpha relative to sensitivity/specificity by proportional outcomes within reference groups (see dplyr code above as well as original confusion matrix for comparison)
+  ggplot(data = plotTable, mapping = aes(x = Reference, y = Prediction, fill = goodbad, alpha = prop)) +
+    geom_tile() +
+    geom_text(aes(label = Freq), vjust = .5, fontface  = "bold", alpha = 1) +
+    scale_fill_manual(values = c(good = "green", bad = "red")) +
+    theme_bw() +
+    xlim(rev(levels(table$Reference))) +
+    ggtitle(paste(model_name,"Confusion Matrix"))
+}
 ```
 
 # iPhone analysis
 
-Load training datasets, one is for IPhone labeled sentiment, and the other one for the Samsung Galaxy phone.
+Load training datasets for iPhone labeled sentiment.
 ```{r echo=FALSE}
 iphoneDF <- read_csv("iphone_smallmatrix_labeled_8d.csv")
-
 ```
 
 Explore structure and descriptive statistics from the training datasets
 ```{r echo=FALSE}
 describe_df("iPhone", iphoneDF)
 ```
-## Check the sentiment results distribution.
-### iPhone sentiments 
+## Labeled sentiment distribution.
 ```{r}
 plot_ly(iphoneDF, x= ~iphoneDF$iphonesentiment, type='histogram')
 ```
-
-
-## Look for any correlation in both dataframes
-### iPhone correlation
+## Feature selection methods
+### Features Correlation
 Explore correlation between all variables:
 ```{r echo=FALSE}
 # create a new data set and remove features highly correlated with the dependant 
@@ -152,6 +167,7 @@ paste("Number of original features: ", ncol(iphoneDF))
 paste("Number of features after cleanup: ", ncol(iphoneCOR))
 plot_correlation(iphoneCOR)
 ```
+### Near Zero Variables
 Removing near zero vars:
 ```{r}
 nzvMetrics <- nearZeroVar(iphoneCOR, saveMetrics = TRUE)
@@ -161,7 +177,7 @@ iphoneNZV <- remove_nzv(iphoneCOR)
 
 paste("NZV number of features after cleanup: ", ncol(iphoneNZV))
 ```
-### RFE
+### Recursive Feature Elimination (RFE)
 ```{r}
 set.seed(9874568)
 iphone_sample <- iphoneDF[sample(1:nrow(iphoneDF), 1000, replace=FALSE),]
@@ -194,9 +210,8 @@ iphoneRFE$iphonesentiment <- iphoneDF$iphonesentiment
 # review outcome
 str(iphoneRFE)
 ```
-
-
-## Preprocess label and partition data
+## Models training
+### Preprocess label and Data Partition
 ```{r}
 df <- iphoneDF
 df$iphonesentiment <- as.factor(df$iphonesentiment)
@@ -229,13 +244,13 @@ train_dfNZV <- iphoneNZV[dataParNZV,]
 test_dfNZV <- iphoneNZV[-dataParNZV,]
 
 ```
-## CV (Cross Validation) and Modeling
+## Cross Validation Fit Control
 ```{r}
 # cross validation 
 fitControl <- trainControl(method = "repeatedcv", number = 10, repeats = 2)
 ```
 
-### C5.0
+### C5.0 Model
 ```{r}
 ##### Decision Tree (C5.0) #####
 print("C5.0: Full Dataset")
@@ -265,7 +280,7 @@ dt_c50_cor["model"]
 dt_c50_cor["post_resample"]
 ```
 
-### Random Forest
+### Random Forest Model
 ```{r}
 print("Random Forest: Full Dataset")
 rf <- caret_train(df, test_df, 'rf', fitControl)
@@ -289,7 +304,7 @@ rf_cor["post_resample"]
 ```
 
 
-### Support Vector Machine
+### Support Vector Machine (SVM) Model
 ```{r}
 print("SVM: Full Dataset")
 svm_train_full <- svm_train(df, test_df)
@@ -312,79 +327,428 @@ svm_train_cor["model"]
 svm_train_cor["post_resample"]
 
 ```
-## K-nearest Neighbors (from the kknn package)
+## K-nearest Neighbors (KNN) Model
 ```{r}
 print("KNN: Full Dataset")
 knn_train_full <- knn_train(df, test_df)
-knn_train_full["model"]
+knn_train_full["model"]$model
 knn_train_full["post_resample"]
 
 print("KNN: RFE")
 knn_train_rfe <- knn_train(iphoneRFE, test_dfRFE)
-knn_train_rfe["model"]
+knn_train_rfe["model"]$model
 knn_train_rfe["post_resample"]
 
 print("KNN: NZV")
 knn_train_nzv <- knn_train(iphoneNZV, test_dfNZV)
-knn_train_nzv["model"]
+knn_train_nzv["model"]$model
 knn_train_nzv["post_resample"]
 
 print("KNN: COR")
 knn_train_cor <- knn_train(iphoneCOR, test_dfCOR)
-knn_train_cor["model"]
+knn_train_cor["model"]$model
 knn_train_cor["post_resample"]
 ```
+## Models Performance
+Grouped bar chart to evaluate model performance
+```{r echo=FALSE}
+model_name <- c(rep("C5.0" , 2) , rep("RF" , 2) , rep("SVM" , 2) , rep("KNN" , 2) )
+metric <- rep(c("Accuracy" , "Kappa") , 4)
+value <- c(dt_c50_rfe["post_resample"]$post_resample, rf_rfe["post_resample"]$post_resample, svm_train_rfe["post_resample"]$post_resample, knn_train_full["post_resample"]$post_resample)
+plot_data <- data.frame(model_name,metric,value)
+
+ggplot(plot_data, aes(fill=metric, y=value, x=model_name)) + 
+  geom_bar(position="dodge", stat="identity") +
+  xlab("Model") + 
+  ggtitle("iPhone Models Comparison")
+
+```
+
+### Confusioon Matrix comparison
+
+**Note:** The KNN showed so poor performance in the Accuracy and Kappa metrics, that was discarded from the analysis.
 
 ```{r}
-# TODO: replace with correct models
 # Creating confusion matrix
-cm_dt <- confusionMatrix(pdt, test_df$iphonesentiment) 
-cm_dt
+iphone_cm_dt <- confusionMatrix(predict(dt_c50_rfe["model"], test_df)$model, test_df$iphonesentiment)
+plot_confusion_matrix(iphone_cm_dt, "C5.0")
 
-#cmRF <- confusionMatrix(prf, test_df$iphonesentiment) 
-#cmRF
+iphone_cmsvm <- confusionMatrix(predict(svm_train_rfe["model"], test_df)$model, test_df$iphonesentiment) 
+plot_confusion_matrix(iphone_cmsvm, "SVM")
 
-cmsvm <- confusionMatrix(psvm, test_df$iphonesentiment) 
-cmsvm
+iphone_cmRF <- confusionMatrix(predict(rf_rfe["model"], test_df)$model, test_df$iphonesentiment) 
+plot_confusion_matrix(iphone_cmRF, "Random Forest")
 
-cmknn <- confusionMatrix(pknn, test_df$iphonesentiment) 
-cmknn
-
-# Grouped bar chart to evaluate model performance
-#Eval <- c(post_c50, post_rf, post_svm, post_knn)
-Eval <- c(post_c50, post_svm, post_knn)
-barplot(Eval, main = "Model Evaluation", col = c("darkblue","red"))
+print("C5.0 detail")
+iphone_cm_dt
+print("\n-------------------------------------------------------------------------------")
+print("RF detail")
+iphone_cmRF
+print("\n-------------------------------------------------------------------------------")
+print("SVM detail")
+iphone_cmsvm
 ```
+## Model Selection
+
+The Accuracy shown by the **Random Forest model, using the Recursive Feature Elimination technique**, was the highest. It also showed the best-balanced accuracy on the confusion matrix analysis. However, caution should be taken since all the models tend to classify occurrences to the "Very Positive (5)" class.
+
+## Large dataset prediction
 Pre processing the large datatset 
 ```{r}
 large_df <- read_csv("big_matrix.csv")
-#str(large_df)
-
 large_df$id <- NULL
-# create new data set with rfe recommended features
+
+# create new data set with RFE recommended features
 large_df <- large_df[,predictors(rfe_results)]
 # review outcome
 str(large_df)
+```
 
+Apply Model on the large dataset
+-----------------------------------------------------------------
+```{r echo=FALSE}
+iphone_predicted <- predict(rf_rfe["model"]$model, large_df)$model
+large_df$iphonesentiment<- iphone_predicted
+summary(iphone_predicted)
+```
+## iPhone Sentiments Results
+```{r}
+iphonesentiment <- summary(iphone_predicted)
+iphonesentiment_df <- data.frame("Categorie"=c("Very Negative", "Negative", "Somewhat Negative", "Somewhat Positive", "Positive", "Very Positive"), iphonesentiment)
+iphone_sent_data <- iphonesentiment_df[,c('Categorie', 'iphonesentiment')]
+
+iphone_pie <- plot_ly(iphone_sent_data, labels = ~Categorie, values = ~iphonesentiment, type = 'pie') %>%
+  layout(title = 'iPhone Sentiment - Nov 2019',
+         xaxis = list(showgrid = FALSE, zeroline = FALSE, showticklabels = FALSE),
+         yaxis = list(showgrid = FALSE, zeroline = FALSE, showticklabels = FALSE))
+
+iphone_pie
+
+```
+_________________________________________
+# Galaxy analysis
+
+Load training dataset for Galaxy labeled sentiment.
+```{r echo=FALSE}
+galaxyDF <- read_csv("galaxy_smallmatrix_labeled_9d.csv")
+```
+
+Explore structure and descriptive statistics from the training datasets
+```{r echo=FALSE}
+describe_df("Galaxy", galaxyDF)
+```
+
+## Labeled sentiment distribution.
+```{r}
+plot_ly(galaxyDF, x= ~galaxyDF$galaxysentiment, type='histogram')
+```
+## Feature selection methods
+### Features Correlation
+Explore correlation between all variables:
+```{r echo=FALSE}
+# create a new data set and remove features highly correlated with the dependant 
+galaxyCOR <- remove_highly_correlated_features(galaxyDF)
+paste("Number of original features: ", ncol(galaxyDF))
+paste("Number of features after cleanup: ", ncol(galaxyCOR))
+plot_correlation(galaxyCOR)
+```
+### Near Zero Variables
+Removing near zero vars:
+```{r}
+galaxy_nzvMetrics <- nearZeroVar(galaxyCOR, saveMetrics = TRUE)
+str(galaxy_nzvMetrics)
+
+galaxyNZV <- remove_nzv(galaxyCOR)
+
+paste("NZV number of features after cleanup: ", ncol(galaxyNZV))
+```
+### Recursive Feature Elimination (RFE)
+```{r}
+set.seed(9874568)
+galaxy_sample <- galaxyDF[sample(1:nrow(galaxyDF), 1000, replace=FALSE),]
+
+# Set up rfeControl with randomforest, repeated cross validation and no updates
+ctrl <- rfeControl(functions = rfFuncs,
+                   method = "repeatedcv",
+                   repeats = 5,
+                   verbose = FALSE)
+
+# Use rfe and omit the response variable (attribute 59 galaxysentiment)
+g_rfe_results <- run_in_parallel(rfe, galaxy_sample[,1:58],
+                              galaxy_sample$galaxysentiment,
+                              sizes=(1:58), rfeControl=ctrl)
+
+# Get results
+g_rfe_results
+
+# Plot results
+plot(g_rfe_results, type=c("g", "o"))
+```
+
+Create a new dataset with the best features found by RFE
+```{r}
+# create new data set with rfe recommended features
+galaxyRFE <- galaxyDF[,predictors(g_rfe_results)]
+
+# add the dependent variable to galaxyRFE
+galaxyRFE$galaxysentiment <- galaxyDF$galaxysentiment
+
+# review outcome
+str(galaxyRFE)
+```
+## Models training
+### Preprocess label and Data Partition
+```{r}
+g_df <- galaxyDF
+g_df$galaxysentiment <- as.factor(g_df$galaxysentiment)
+plot_ly(g_df, x= ~g_df$galaxysentiment, type='histogram')
+
+set.seed(90210)
+g_dataPar <- createDataPartition(g_df$galaxysentiment, p = .70, list = FALSE)
+g_train_df <- g_df[g_dataPar,]
+g_test_df <- g_df[-g_dataPar,]
+
+#galaxyCOR
+galaxyCOR$galaxysentiment <- as.factor(galaxyCOR$galaxysentiment)
+set.seed(90210)
+g_dataParCOR <- createDataPartition(galaxyCOR$galaxysentiment, p = .70, list = FALSE)
+g_train_dfCOR <- galaxyCOR[g_dataParCOR,]
+g_test_dfCOR <- galaxyCOR[-g_dataParCOR,]
+
+#galaxyRFE
+galaxyRFE$galaxysentiment <- as.factor(galaxyRFE$galaxysentiment)
+set.seed(90210)
+g_dataParRFE <- createDataPartition(galaxyRFE$galaxysentiment, p = .70, list = FALSE)
+g_train_dfRFE <- galaxyRFE[g_dataParRFE,]
+g_test_dfRFE <- galaxyRFE[-g_dataParRFE,]
+
+#galaxyNZV
+galaxyNZV$galaxysentiment <- as.factor(galaxyNZV$galaxysentiment)
+set.seed(90210)
+g_dataParNZV <- createDataPartition(galaxyNZV$galaxysentiment, p = .70, list = FALSE)
+g_train_dfNZV <- galaxyNZV[g_dataParNZV,]
+g_test_dfNZV <- galaxyNZV[-g_dataParNZV,]
+
+```
+## Cross Validation Fit Control
+```{r}
+# cross validation 
+fitControl <- trainControl(method = "repeatedcv", number = 10, repeats = 2)
+
+# Training functions
+g_svm_train <- function(dataF, testing_data) {
+  # SVM (from the e1071 package) 
+  library(e1071)
+  set.seed(641386945)
+  system.time(res.model <- run_in_parallel(svm, galaxysentiment ~., data = dataF))
+  res.predictions <- predict(res.model, testing_data) 
+  res.post_resample <- postResample(res.predictions, testing_data$galaxysentiment)
+  return(list("model" = res.model, "post_resample" = res.post_resample))
+}
+
+g_knn_train <- function(dataF, testing_data) {
+  # K-nearest Neighbors (from the kknn package)
+  library(kknn)
+  set.seed(641386945)
+  system.time(res.model <- run_in_parallel(train.kknn, galaxysentiment ~., data = dataF))
+  res.predictions <- predict(res.model, testing_data) 
+  res.post_resample <- postResample(res.predictions, testing_data$galaxysentiment)
+  return(list("model" = res.model, "post_resample" = res.post_resample))
+}
+
+g_caret_train <- function(dataF, testing_data, model_name, fitCtrl) {
+  set.seed(641386945)
+  system.time(res.model <- run_in_parallel(train, galaxysentiment~., data = dataF, method = model_name, trControl = fitCtrl ))
+  res.predictions <- predict(res.model, testing_data) 
+  res.post_resample <- postResample(res.predictions, testing_data$galaxysentiment)
+  return(list("model" = res.model, "post_resample" = res.post_resample))
+}
+```
+### C5.0 Model
+```{r}
+##### Decision Tree (C5.0) #####
+print("C5.0: Full Dataset")
+g_dt_c50 <- g_caret_train(g_df, g_test_df, 'C5.0', fitControl)
+g_dt_c50["model"]
+g_dt_c50["post_resample"]
+
+#Train model with RFE dataset:
+print("C5.0: RFE")
+g_dt_c50_rfe <- g_caret_train(galaxyRFE, g_test_dfRFE, 'C5.0', fitControl)
+g_dt_c50_rfe["model"]
+g_dt_c50_rfe["post_resample"]
+
+#Train model with NZV dataset:
+print("C5.0: NZV")
+g_dt_c50_nzv <- g_caret_train(galaxyNZV, g_test_dfNZV, 'C5.0', fitControl)
+g_dt_c50_nzv["model"]
+g_dt_c50_nzv["post_resample"]
+
+#Train model with COR dataset:
+print("C5.0: COR")
+g_dt_c50_cor <- g_caret_train(galaxyCOR, g_test_dfCOR, 'C5.0', fitControl)
+g_dt_c50_cor["model"]
+g_dt_c50_cor["post_resample"]
+```
+
+### Random Forest Model
+```{r}
+print("Random Forest: Full Dataset")
+g_rf <- g_caret_train(g_df, g_test_df, 'rf', fitControl)
+g_rf["model"]
+g_rf["post_resample"]
+
+print("Random Forest: RFE")
+g_rf_rfe <- g_caret_train(galaxyRFE, g_test_dfRFE, 'rf', fitControl)
+g_rf_rfe["model"]
+g_rf_rfe["post_resample"]
+
+print("Random Forest: NZV")
+g_rf_nzv <- g_caret_train(galaxyNZV, g_test_dfNZV, 'rf', fitControl)
+g_rf_nzv["model"]
+g_rf_nzv["post_resample"]
+
+print("Random Forest: COR")
+g_rf_cor <- g_caret_train(galaxyCOR, g_test_dfCOR, 'rf', fitControl)
+g_rf_cor["model"]
+g_rf_cor["post_resample"]
+```
+
+
+### Support Vector Machine (SVM) Model
+```{r}
+print("SVM: Full Dataset")
+g_svm_train_full <- g_svm_train(g_df, g_test_df)
+g_svm_train_full["model"]
+g_svm_train_full["post_resample"]
+
+print("SVM: RFE")
+g_svm_train_rfe <- g_svm_train(galaxyRFE, g_test_dfRFE)
+g_svm_train_rfe["model"]
+g_svm_train_rfe["post_resample"]
+
+print("SVM: NZV")
+g_svm_train_nzv <- g_svm_train(galaxyNZV, g_test_dfNZV)
+g_svm_train_nzv["model"]
+g_svm_train_nzv["post_resample"]
+
+print("SVM: COR")
+g_svm_train_cor <- g_svm_train(galaxyCOR, g_test_dfCOR)
+g_svm_train_cor["model"]
+g_svm_train_cor["post_resample"]
+
+```
+## K-nearest Neighbors (KNN) Model
+```{r}
+print("KNN: Full Dataset")
+g_knn_train_full <- g_knn_train(g_df, g_test_df)
+g_knn_train_full["model"]
+g_knn_train_full["post_resample"]
+
+print("KNN: RFE")
+g_knn_train_rfe <- g_knn_train(galaxyRFE, g_test_dfRFE)
+g_knn_train_rfe["model"]
+g_knn_train_rfe["post_resample"]
+
+print("KNN: NZV")
+g_knn_train_nzv <- g_knn_train(galaxyNZV, g_test_dfNZV)
+g_knn_train_nzv["model"]
+g_knn_train_nzv["post_resample"]
+
+print("KNN: COR")
+g_knn_train_cor <- g_knn_train(galaxyCOR, g_test_dfCOR)
+g_knn_train_cor["model"]
+g_knn_train_cor["post_resample"]
+```
+## Models Performance
+Grouped bar chart to evaluate model performance
+## Models Performance
+Grouped bar chart to evaluate model performance
+```{r echo=FALSE}
+g_model_name <- c(rep("C5.0" , 2) , rep("RF" , 2) , rep("SVM" , 2) , rep("KNN" , 2) )
+metric <- rep(c("Accuracy" , "Kappa") , 4)
+value <- c(g_dt_c50["post_resample"]$post_resample, g_rf["post_resample"]$post_resample, g_svm_train_nzv["post_resample"]$post_resample, g_knn_train_cor["post_resample"]$post_resample)
+plot_data <- data.frame(g_model_name,metric,value)
+
+ggplot(plot_data, aes(fill=metric, y=value, x=g_model_name)) + 
+  geom_bar(position="dodge", stat="identity") +
+  xlab("Model") + 
+  ggtitle("Galaxy Models Comparison")
+
+```
+
+```{r}
+# Creating confusion matrix
+g_cm_dt <- confusionMatrix(predict(g_dt_c50["model"], g_test_df)$model, g_test_df$galaxysentiment)
+plot_confusion_matrix(g_cm_dt, "C5.0")
+
+g_cmsvm <- confusionMatrix(predict(g_svm_train_nzv["model"], g_test_df)$model, g_test_df$galaxysentiment) 
+plot_confusion_matrix(g_cmsvm, "SVM")
+
+g_cmRF <- confusionMatrix(predict(g_rf["model"], g_test_df)$model, g_test_df$galaxysentiment) 
+plot_confusion_matrix(g_cmRF, "Random Forest")
+
+g_cmknn <- confusionMatrix(predict(g_knn_train_cor["model"]$model, g_test_df), g_test_df$galaxysentiment) 
+plot_confusion_matrix(g_cmknn, "KNN")
+
+print("C5.0 detail")
+g_cm_dt
+print("\n-------------------------------------------------------------------------------")
+print("RF detail")
+g_cmRF
+print("\n-------------------------------------------------------------------------------")
+print("SVM detail")
+g_cmsvm
+print("\n-------------------------------------------------------------------------------")
+print("KNN detail")
+g_cmknn
+```
+## Model Selection
+
+The accuracy and kappa shown by the **Random Forest model, using all the feattures from the dataset were the best.
+
+## Large dataset prediction
+Pre processing the large datatset 
+```{r}
+g_large_df <- read_csv("big_matrix.csv")
+g_large_df$id <- NULL
+
+# No Feautures need to be removed
+# review outcome
+str(g_large_df)
 ```
 
 Apply Model on the large dataset
 ```{r}
-options(max.print=1000000)
-
-large_df$iphonesentiment<- predict(rf_rfe["model"], large_df)
-head(large_df$iphonesentiment, 5)
-summary(large_df$iphonesentiment)
+g_large_df$galaxysentiment<- predict(g_rf["model"]$model, g_large_df)
+head(g_large_df$galaxysentiment, 5)
+summary(g_large_df$galaxysentiment)
 ```
-
------------------------------------------------------------------
+## Galaxy Sentiments Results
 ```{r}
-predicted <- predict(rf_rfe["model"], head(large_df, 20000))
-predicted
-#large_df$iphonesentiment<- predict(rf_rfe["model"], large_df)
-#head(large_df$iphonesentiment, 5)
-#summary(large_df$iphonesentiment)
-```
+galaxysentiment <- summary(g_large_df$galaxysentiment)
+galaxysentiment_df <- data.frame("Categorie"=c("Very Negative", "Negative", "Somewhat Negative", "Somewhat Positive", "Positive", "Very Positive"), galaxysentiment)
+galaxy_sent_data <- galaxysentiment_df[,c('Categorie', 'galaxysentiment')]
 
+galaxy_pie <- plot_ly(galaxy_sent_data, labels = ~Categorie, values = ~galaxysentiment, type = 'pie') %>%
+  layout(title = 'Galaxy Sentiment - Nov 2019',
+         xaxis = list(showgrid = FALSE, zeroline = FALSE, showticklabels = FALSE),
+         yaxis = list(showgrid = FALSE, zeroline = FALSE, showticklabels = FALSE))
+
+galaxy_pie
+
+```
+```{r}
+p <- plot_ly() %>%
+  add_pie(data=galaxy_sent_data, labels = ~Categorie, values = ~galaxysentiment,
+          name = "Galaxy", domain = list(x = c(0, 0.4), y = c(0.4, 1))) %>%
+  add_pie(iphone_sent_data, labels = ~Categorie, values = ~iphonesentiment,
+          name = "iPhone", domain = list(x = c(0.6, 1), y = c(0.4, 1))) %>%
+  layout(title = "Galaxy (left) vs iPhone (right) Sentiments ", showlegend = F,
+         xaxis = list(showgrid = FALSE, zeroline = FALSE, showticklabels = TRUE),
+         yaxis = list(showgrid = FALSE, zeroline = FALSE, showticklabels = TRUE))
+
+p
+```
 
 --EOF--
